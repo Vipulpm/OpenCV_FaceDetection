@@ -1,0 +1,6 @@
+@OpenCV_FaceDetection_HostAddress = http://localhost:5144
+
+GET {{OpenCV_FaceDetection_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
