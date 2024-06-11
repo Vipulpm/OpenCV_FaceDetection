@@ -7,8 +7,10 @@ using Microsoft.AspNetCore.Mvc;
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.IO;
+using System.Net;
 using System.Runtime.InteropServices;
 using System.Xml;
+using static System.Net.Mime.MediaTypeNames;
 
 
 namespace OpenCV_FaceDetection.Controllers
@@ -17,7 +19,7 @@ namespace OpenCV_FaceDetection.Controllers
     [ApiController]
     public class FaceDetectionController : ControllerBase
     {
-        /*[HttpPost("detect")]
+        [HttpPost("detect")]
         public IActionResult DetectFaces(IFormFile imageFile)
         {
             if (imageFile == null || imageFile.Length == 0)
@@ -40,9 +42,14 @@ namespace OpenCV_FaceDetection.Controllers
                 CvInvoke.CvtColor(img, grayImg, ColorConversion.Bgr2Gray);
 
                 // Load the HaarCascade for face detection
-                string haarCascadePath = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", "haarcascade_frontalface_default.xml");
+                string haarCascadePath = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", "haarcascades", "haarcascade_frontalface_default.xml");
+                if (!System.IO.File.Exists(haarCascadePath))
+                {
+                    return BadRequest("Haar Cascade file not found.");
+                }
                 CascadeClassifier faceCascade = new CascadeClassifier(haarCascadePath);
 
+                // Detect faces
                 // Detect faces
                 Rectangle[] facesDetected = faceCascade.DetectMultiScale(
                     grayImg,
@@ -66,6 +73,9 @@ namespace OpenCV_FaceDetection.Controllers
                     imageBytes = ms.ToArray();
                 }
 
+                // Set the face count in the response header
+                Response.Headers.Add("x-number-of-faces", facesDetected.Length.ToString());
+
                 // Return the processed image
                 return File(imageBytes, "image/jpeg");
             }
@@ -73,124 +83,60 @@ namespace OpenCV_FaceDetection.Controllers
 
         private Mat BitmapToMat(Bitmap bitmap)
         {
-            Mat mat = new Mat();
-            BitmapData bitmapData = bitmap.LockBits(new Rectangle(0, 0, bitmap.Width, bitmap.Height), ImageLockMode.ReadOnly, bitmap.PixelFormat);
-
-            // Create a new byte array to store the image data
-            byte[] imageData = new byte[bitmapData.Stride * bitmapData.Height];
-            Marshal.Copy(bitmapData.Scan0, imageData, 0, imageData.Length);
-
-            // Create a Mat using the image data
-            mat = new Mat(bitmap.Height, bitmap.Width, DepthType.Cv8U, 3);
-            mat.SetTo(imageData);
-
-            bitmap.UnlockBits(bitmapData);
-            return mat;
-        }
-
-        private Bitmap MatToBitmap(Mat mat)
-        {
-            // Convert Mat to byte array
-            byte[] data = new byte[mat.Rows * mat.Cols * mat.ElementSize];
-            Marshal.Copy(mat.DataPointer, data, 0, data.Length);
-
-            // Create bitmap from byte array
-            Bitmap bitmap = new Bitmap(mat.Cols, mat.Rows, PixelFormat.Format24bppRgb);
-            BitmapData bitmapData = bitmap.LockBits(new Rectangle(0, 0, mat.Cols, mat.Rows), ImageLockMode.WriteOnly, bitmap.PixelFormat);
-            Marshal.Copy(data, 0, bitmapData.Scan0, data.Length);
-            bitmap.UnlockBits(bitmapData);
-
-            return bitmap;
-        }*/
-
-        [HttpPost("detect")]
-        public IActionResult DetectFaces(IFormFile imageFile)
-        {
-            if (imageFile == null || imageFile.Length == 0)
-                return BadRequest("No image file provided.");
-
-            using (var stream = new MemoryStream())
+            // Ensure the bitmap is in the 24bppRgb format
+            if (bitmap.PixelFormat != PixelFormat.Format24bppRgb)
             {
-                imageFile.CopyTo(stream);
-                stream.Position = 0;
-
-                // Load the image from the stream
-                // Convert Bitmap to Emgu.CV Image<Bgr, byte>
-                using (Image<Bgr, byte> img = MatToBitmap().ToImage<Bgr, byte>())
+                Bitmap temp = new Bitmap(bitmap.Width, bitmap.Height, PixelFormat.Format24bppRgb);
+                using (Graphics g = Graphics.FromImage(temp))
                 {
-                    // Convert to grayscale
-                    using (Image<Gray, byte> grayImg = img.Convert<Gray, byte>())
-                    {
-                        // Load the HaarCascade for face detection
-                        string haarCascadePath = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", "haarcascade_frontalface_default.xml");
-
-                        // Load the XML document
-                        XmlDocument doc = new XmlDocument();
-                        doc.Load(haarCascadePath);
-
-                        // Parse XML to get cascade data
-                        XmlNode cascadeNode = doc.SelectSingleNode("//opencv_storage/cascade");
-                        string cascadeData = cascadeNode.InnerXml;
-
-                        // Create a cascade classifier with the cascade data
-                        using (var faceCascade = new CascadeClassifier())
-                        {
-                            faceCascade.LoadFromString(cascadeData);
-
-                            // Detect faces
-                            Rectangle[] facesDetected = faceCascade.DetectMultiScale(
-                                grayImg,
-                                1.1,
-                                10,
-                                new Size(20, 20),
-                                Size.Empty);
-
-                            // Draw rectangles around detected faces
-                            foreach (Rectangle face in facesDetected)
-                            {
-                                img.Draw(face, new Bgr(Color.Red), 2);
-                            }
-
-                            // Convert the image back to byte array
-                            byte[] imageBytes = img.ToJpegData();
-
-                            // Return the processed image
-                            return File(imageBytes, "image/jpeg");
-                        }
-                    }
+                    g.DrawImage(bitmap, new Rectangle(0, 0, temp.Width, temp.Height));
                 }
+                bitmap = temp;
             }
-        }
-        private Mat BitmapToMat(Bitmap bitmap)
-        {
-            Mat mat = new Mat();
+
+            // Create a new Mat with the same size and type as the bitmap
+            Mat mat = new Mat(bitmap.Height, bitmap.Width, DepthType.Cv8U, 3);
+
+            // Lock the bitmap's bits
             BitmapData bitmapData = bitmap.LockBits(new Rectangle(0, 0, bitmap.Width, bitmap.Height), ImageLockMode.ReadOnly, bitmap.PixelFormat);
 
-            // Create a new byte array to store the image data
-            byte[] imageData = new byte[bitmapData.Stride * bitmapData.Height];
-            Marshal.Copy(bitmapData.Scan0, imageData, 0, imageData.Length);
-
-            // Create a Mat using the image data
-            mat = new Mat(bitmap.Height, bitmap.Width, DepthType.Cv8U, 3);
-            mat.SetTo(imageData);
-
+            // Copy the bitmap data to the Mat
+            int stride = bitmapData.Stride;
+            int bytes = stride * bitmap.Height;
+            byte[] rgbValues = new byte[bytes];
+            Marshal.Copy(bitmapData.Scan0, rgbValues, 0, bytes);
             bitmap.UnlockBits(bitmapData);
+
+            // Set the Mat data
+            Marshal.Copy(rgbValues, 0, mat.DataPointer, bytes);
+
             return mat;
         }
 
         private Bitmap MatToBitmap(Mat mat)
         {
-            // Convert Mat to byte array
-            byte[] data = new byte[mat.Rows * mat.Cols * mat.ElementSize];
-            Marshal.Copy(mat.DataPointer, data, 0, data.Length);
+            // Create a new Bitmap with the same size as the Mat
+            Bitmap bitmap = new Bitmap(mat.Width, mat.Height, PixelFormat.Format24bppRgb);
 
-            // Create bitmap from byte array
-            Bitmap bitmap = new Bitmap(mat.Cols, mat.Rows, PixelFormat.Format24bppRgb);
-            BitmapData bitmapData = bitmap.LockBits(new Rectangle(0, 0, mat.Cols, mat.Rows), ImageLockMode.WriteOnly, bitmap.PixelFormat);
-            Marshal.Copy(data, 0, bitmapData.Scan0, data.Length);
+            // Lock the bitmap's bits
+            BitmapData bitmapData = bitmap.LockBits(new Rectangle(0, 0, bitmap.Width, bitmap.Height), ImageLockMode.WriteOnly, bitmap.PixelFormat);
+
+            // Check if the Mat is of the expected type
+            if (mat.Depth != DepthType.Cv8U || mat.NumberOfChannels != 3)
+            {
+                throw new NotSupportedException("Only 8-bit, 3-channel Mats are supported.");
+            }
+
+            // Copy the Mat data to the Bitmap
+            int stride = bitmapData.Stride;
+            int bytes = stride * mat.Height;
+            byte[] rgbValues = new byte[bytes];
+            Marshal.Copy(mat.DataPointer, rgbValues, 0, bytes);
+            Marshal.Copy(rgbValues, 0, bitmapData.Scan0, bytes);
             bitmap.UnlockBits(bitmapData);
 
             return bitmap;
         }
+
     }
 }
